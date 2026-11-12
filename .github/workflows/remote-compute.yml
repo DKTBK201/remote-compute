@@ -43,7 +43,6 @@ jobs:
     env:
       TASK_COMMAND: ${{ inputs.command }}
       TASK_DIRECTORY: ${{ inputs.working_directory }}
-      ARTIFACT_PATHS: ${{ inputs.artifact_paths }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
