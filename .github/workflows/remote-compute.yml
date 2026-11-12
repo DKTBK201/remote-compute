@@ -1,0 +1,79 @@
+name: Remote Compute
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Task category (label only; command controls execution)
+        type: choice
+        required: true
+        default: build
+        options: [build, test, custom]
+      command:
+        description: Bash command to run on the hosted runner
+        type: string
+        required: true
+      working_directory:
+        description: Relative directory from repository root
+        type: string
+        required: true
+        default: .
+      artifact_paths:
+        description: Optional newline-separated artifact paths/globs, relative to repository root
+        type: string
+        required: false
+      timeout_minutes:
+        description: Job timeout in minutes (1-360)
+        type: number
+        required: true
+        default: 60
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-compute-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run-task:
+    name: ${{ inputs.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
+    env:
+      TASK_COMMAND: ${{ inputs.command }}
+      TASK_DIRECTORY: ${{ inputs.working_directory }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs and run task
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout="${{ inputs.timeout_minutes }}"
+          if ! [[ "$timeout" =~ ^[0-9]+$ ]] || (( timeout < 1 || timeout > 360 )); then
+            echo "timeout_minutes must be between 1 and 360" >&2
+            exit 2
+          fi
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+          requested="$(realpath -m "$GITHUB_WORKSPACE/$TASK_DIRECTORY")"
+          case "$requested" in
+            "$workspace"|"$workspace"/*) ;;
+            *) echo "working_directory must stay inside the repository checkout" >&2; exit 2 ;;
+          esac
+          if [[ ! -d "$requested" ]]; then
+            echo "working_directory does not exist: $TASK_DIRECTORY" >&2
+            exit 2
+          fi
+          cd "$requested"
+          bash -euo pipefail -c "$TASK_COMMAND"
+
+      - name: Upload requested artifacts
+        if: ${{ success() && inputs.artifact_paths != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-compute-${{ github.run_id }}
+          path: ${{ inputs.artifact_paths }}
+          if-no-files-found: error
+          retention-days: 7
